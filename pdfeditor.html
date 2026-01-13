@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Editor Pro - Local Tools</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- pdf-lib for PDF manipulation -->
+    <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
+    <!-- sql.js for SQLite support -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.6.2/sql-wasm.js"></script>
+    <style>
+        .page-card {
+            transition: transform 0.2s;
+        }
+        .page-card:hover {
+            transform: scale(1.02);
+        }
+        .drag-over {
+            border: 2px dashed #3b82f6;
+            background-color: #eff6ff;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen font-sans">
+
+    <nav class="bg-indigo-700 text-white p-4 shadow-lg">
+        <div class="container mx-auto flex justify-between items-center">
+            <h1 class="text-xl font-bold flex items-center">
+                <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                PDF Editor Pro (Local)
+            </h1>
+            <div class="flex space-x-4 text-sm">
+                <button onclick="switchTab('merge')" class="hover:underline">結合</button>
+                <button onclick="switchTab('split')" class="hover:underline">分割</button>
+                <button onclick="switchTab('edit')" class="hover:underline">編集 (順序・回転)</button>
+                <button onclick="switchTab('database')" class="bg-indigo-800 px-3 py-1 rounded hover:bg-indigo-900">SQLite同期</button>
+            </div>
+        </div>
+    </nav>
+
+    <main class="container mx-auto p-6">
+        
+        <!-- SQLite Database Sync Panel -->
+        <section id="tab-database" class="hidden bg-white p-6 rounded-lg shadow-md mb-6">
+            <h2 class="text-lg font-semibold mb-4 text-gray-800">SQLiteデータベース管理</h2>
+            <p class="text-sm text-gray-600 mb-4">
+                作業履歴や設定をSQLiteファイルとして保存・復元できます。
+            </p>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="border p-4 rounded bg-gray-50">
+                    <h3 class="font-medium mb-2">DBをアップロードして再開</h3>
+                    <input type="file" id="db-upload" accept=".sqlite,.db" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+                </div>
+                <div class="border p-4 rounded bg-gray-50 flex flex-col justify-center">
+                    <h3 class="font-medium mb-2">現在の状態をエクスポート</h3>
+                    <button onclick="exportDatabase()" class="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 w-fit">
+                        SQLiteファイルを保存
+                    </button>
+                </div>
+            </div>
+            <div id="db-status" class="mt-4 p-3 bg-blue-50 text-blue-800 text-xs rounded">
+                データベース未読込（新規セッション）
+            </div>
+        </section>
+
+        <!-- Tab: Merge -->
+        <section id="tab-merge" class="tab-content">
+            <div class="bg-white p-6 rounded-lg shadow-md">
+                <div class="flex justify-between items-center mb-4 border-b pb-2">
+                    <h2 class="text-2xl font-bold text-gray-800">PDF結合</h2>
+                    <button onclick="resetMerge()" class="text-sm text-red-600 hover:text-red-800 font-medium">リストをクリア</button>
+                </div>
+                <div class="mb-6 border-2 border-dashed border-gray-300 p-8 text-center rounded-lg hover:border-indigo-400 transition" id="drop-zone-merge">
+                    <p class="text-gray-500 mb-2">複数のPDFファイルをここにドロップするか、選択してください</p>
+                    <input type="file" id="merge-files" multiple accept="application/pdf" class="hidden">
+                    <button onclick="document.getElementById('merge-files').click()" class="bg-indigo-600 text-white px-6 py-2 rounded-full font-medium shadow-md hover:bg-indigo-700 transition">
+                        ファイルを選択
+                    </button>
+                </div>
+                <div id="merge-list" class="space-y-2 mb-6">
+                    <!-- File list here -->
+                </div>
+                <button id="btn-merge" onclick="processMerge()" class="bg-green-600 text-white px-8 py-3 rounded-lg font-bold shadow-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed hidden">
+                    結合してダウンロード
+                </button>
+            </div>
+        </section>
+
+        <!-- Tab: Split -->
+        <section id="tab-split" class="tab-content hidden">
+            <div class="bg-white p-6 rounded-lg shadow-md">
+                <div class="flex justify-between items-center mb-4 border-b pb-2">
+                    <h2 class="text-2xl font-bold text-gray-800">PDF分割 (全ページバラ出し)</h2>
+                    <button id="btn-reset-split" onclick="resetSplit()" class="text-sm text-red-600 hover:text-red-800 font-medium hidden">リセット</button>
+                </div>
+                <div id="split-upload-container" class="mb-6">
+                    <input type="file" id="split-file" accept="application/pdf" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+                </div>
+                <div id="split-info" class="mb-6 text-gray-600"></div>
+                <button id="btn-split" onclick="processSplit()" class="bg-orange-600 text-white px-8 py-3 rounded-lg font-bold shadow-lg hover:bg-orange-700 disabled:opacity-50 hidden">
+                    全ページを個別にダウンロード
+                </button>
+                <p class="text-xs text-gray-400 mt-2 italic">※ページ数が多い場合、ブラウザによりダウンロードの許可確認が出る場合があります。</p>
+            </div>
+        </section>
+
+        <!-- Tab: Edit (Reorder & Rotate) -->
+        <section id="tab-edit" class="tab-content hidden">
+            <div class="bg-white p-6 rounded-lg shadow-md">
+                <div class="flex justify-between items-center mb-4 border-b pb-2">
+                    <h2 class="text-2xl font-bold text-gray-800">並べ替え・回転</h2>
+                    <button id="btn-reset-edit" onclick="resetEdit()" class="text-sm text-red-600 hover:text-red-800 font-medium hidden">リセット</button>
+                </div>
+                <div id="edit-upload-container" class="mb-6">
+                    <input type="file" id="edit-file" accept="application/pdf" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+                </div>
+                
+                <div id="edit-workspace" class="hidden">
+                    <div class="flex justify-between items-center mb-4">
+                        <span class="text-sm text-gray-500">カードをドラッグして順序変更、アイコンで回転</span>
+                        <button onclick="processEdit()" class="bg-indigo-600 text-white px-6 py-2 rounded font-bold hover:bg-indigo-700">
+                            変更を保存してダウンロード
+                        </button>
+                    </div>
+                    <div id="pages-container" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4 border p-4 rounded bg-gray-50">
+                        <!-- Pages as cards here -->
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <div id="loading" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
+        <div class="bg-white p-6 rounded-lg flex items-center space-x-4">
+            <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-700"></div>
+            <span class="font-medium">処理中...</span>
+        </div>
+    </div>
+
+    <!-- Feedback Message -->
+    <div id="toast" class="fixed bottom-10 right-10 transform translate-y-20 opacity-0 transition-all duration-300 bg-gray-800 text-white px-6 py-3 rounded-lg shadow-2xl z-50">
+        Message
+    </div>
+
+    <script>
+        // --- State Management ---
+        let db = null;
+        let mergeFiles = [];
+        let editPageState = []; // { originalIndex, rotation }
+        let currentEditDoc = null;
+        const SQL_CONFIG = {
+            locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.6.2/${file}`
+        };
+
+        // --- Initialization ---
+        window.onload = async () => {
+            await initDB();
+            setupEventListeners();
+        };
+
+        async function initDB() {
+            try {
+                const SQL = await initSqlJs(SQL_CONFIG);
+                db = new SQL.Database();
+                // Create table for audit trail
+                db.run("CREATE TABLE IF NOT EXISTS history (id INTEGER PRIMARY KEY AUTOINCREMENT, action TEXT, filename TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)");
+                updateDbStatus("新規データベースが初期化されました");
+            } catch (err) {
+                console.error("DB Init Error:", err);
+                showToast("SQLiteの初期化に失敗しました。");
+            }
+        }
+
+        function setupEventListeners() {
+            // Merge Upload
+            const mergeInput = document.getElementById('merge-files');
+            mergeInput.onchange = (e) => handleMergeFiles(e.target.files);
+
+            // Split Upload
+            const splitInput = document.getElementById('split-file');
+            splitInput.onchange = (e) => handleSplitFile(e.target.files[0]);
+
+            // Edit Upload
+            const editInput = document.getElementById('edit-file');
+            editInput.onchange = (e) => handleEditFile(e.target.files[0]);
+
+            // DB Upload
+            const dbInput = document.getElementById('db-upload');
+            dbInput.onchange = (e) => importDatabase(e.target.files[0]);
+
+            // Drag and Drop for Merge
+            const dropZone = document.getElementById('drop-zone-merge');
+            dropZone.ondragover = (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); };
+            dropZone.ondragleave = () => { dropZone.classList.remove('drag-over'); };
+            dropZone.ondrop = (e) => {
+                e.preventDefault();
+                dropZone.classList.remove('drag-over');
+                handleMergeFiles(e.dataTransfer.files);
+            };
+        }
+
+        // --- Tabs ---
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+            document.getElementById('tab-database').classList.add('hidden');
+            
+            if (tabId === 'database') {
+                document.getElementById('tab-database').classList.remove('hidden');
+            } else {
+                document.getElementById(`tab-${tabId}`).classList.remove('hidden');
+            }
+        }
+
+        // --- Utility ---
+        function showLoading(show) {
+            document.getElementById('loading').classList.toggle('hidden', !show);
+        }
+
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            toast.innerText = msg;
+            toast.classList.remove('translate-y-20', 'opacity-0');
+            setTimeout(() => {
+                toast.classList.add('translate-y-20', 'opacity-0');
+            }, 3000);
+        }
+
+        function updateDbStatus(text) {
+            document.getElementById('db-status').innerText = text;
+        }
+
+        function logToDb(action, filename) {
+            if (!db) return;
+            const stmt = db.prepare("INSERT INTO history (action, filename) VALUES (?, ?)");
+            stmt.run([action, filename]);
+            stmt.free();
+        }
+
+        // --- Database Logic ---
+        async function importDatabase(file) {
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = async function() {
+                try {
+                    const SQL = await initSqlJs(SQL_CONFIG);
+                    const Uints = new Uint8Array(this.result);
+                    db = new SQL.Database(Uints);
+                    updateDbStatus(`データベース読込完了: ${file.name}`);
+                    showToast("データベースを読み込みました。");
+                } catch (err) {
+                    showToast("有効なSQLiteファイルではありません。");
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function exportDatabase() {
+            if (!db) return;
+            const data = db.export();
+            const blob = new Blob([data], { type: "application/x-sqlite3" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `pdf_editor_history_${new Date().getTime()}.sqlite`;
+            a.click();
+            URL.revokeObjectURL(url);
+            showToast("SQLiteファイルを書き出しました。");
+        }
+
+        // --- PDF Logic: Merge ---
+        function handleMergeFiles(files) {
+            for (let file of files) {
+                if (file.type === "application/pdf") {
+                    mergeFiles.push(file);
+                }
+            }
+            renderMergeList();
+            document.getElementById('merge-files').value = ""; // Reset input to allow re-selection
+        }
+
+        function renderMergeList() {
+            const list = document.getElementById('merge-list');
+            list.innerHTML = "";
+            mergeFiles.forEach((file, index) => {
+                const div = document.createElement('div');
+                div.className = "flex items-center justify-between p-3 bg-gray-50 border rounded";
+                div.innerHTML = `
+                    <div class="flex items-center">
+                        <span class="bg-indigo-100 text-indigo-700 px-2 py-1 rounded-full text-xs font-bold mr-3">${index + 1}</span>
+                        <span class="text-sm font-medium text-gray-700">${file.name}</span>
+                    </div>
+                    <div class="flex space-x-2">
+                        <button onclick="moveMergeItem(${index}, -1)" class="text-gray-400 hover:text-indigo-600 px-2">↑</button>
+                        <button onclick="moveMergeItem(${index}, 1)" class="text-gray-400 hover:text-indigo-600 px-2">↓</button>
+                        <button onclick="removeMergeItem(${index})" class="text-red-400 hover:text-red-600 ml-4">削除</button>
+                    </div>
+                `;
+                list.appendChild(div);
+            });
+            document.getElementById('btn-merge').classList.toggle('hidden', mergeFiles.length < 2);
+        }
+
+        function moveMergeItem(index, direction) {
+            const target = index + direction;
+            if (target >= 0 && target < mergeFiles.length) {
+                const temp = mergeFiles[index];
+                mergeFiles[index] = mergeFiles[target];
+                mergeFiles[target] = temp;
+                renderMergeList();
+            }
+        }
+
+        function removeMergeItem(index) {
+            mergeFiles.splice(index, 1);
+            renderMergeList();
+        }
+
+        function resetMerge() {
+            mergeFiles = [];
+            renderMergeList();
+            document.getElementById('merge-files').value = "";
+            logToDb("Reset Merge", "All files cleared");
+            showToast("結合リストをクリアしました。");
+        }
+
+        async function processMerge() {
+            showLoading(true);
+            try {
+                const mergedPdf = await PDFLib.PDFDocument.create();
+                for (const file of mergeFiles) {
+                    const arrayBuffer = await file.arrayBuffer();
+                    const pdf = await PDFLib.PDFDocument.load(arrayBuffer);
+                    const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
+                    copiedPages.forEach((page) => mergedPdf.addPage(page));
+                }
+                const pdfBytes = await mergedPdf.save();
+                downloadFile(pdfBytes, "merged.pdf", "application/pdf");
+                logToDb("Merge", `${mergeFiles.length} files`);
+                showToast("結合が完了しました。");
+            } catch (err) {
+                console.error(err);
+                showToast("結合中にエラーが発生しました。");
+            }
+            showLoading(false);
+        }
+
+        // --- PDF Logic: Split ---
+        let currentSplitFile = null;
+        async function handleSplitFile(file) {
+            if (!file || file.type !== "application/pdf") return;
+            currentSplitFile = file;
+            showLoading(true);
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                const pdf = await PDFLib.PDFDocument.load(arrayBuffer);
+                const count = pdf.getPageCount();
+                document.getElementById('split-info').innerText = `${file.name} - ${count}ページ検出されました。`;
+                document.getElementById('btn-split').classList.remove('hidden');
+                document.getElementById('btn-reset-split').classList.remove('hidden');
+                document.getElementById('split-upload-container').classList.add('hidden');
+            } catch (err) {
+                showToast("PDFの解析に失敗しました。");
+            }
+            showLoading(false);
+        }
+
+        function resetSplit() {
+            currentSplitFile = null;
+            document.getElementById('split-info').innerText = "";
+            document.getElementById('btn-split').classList.add('hidden');
+            document.getElementById('btn-reset-split').classList.add('hidden');
+            document.getElementById('split-upload-container').classList.remove('hidden');
+            document.getElementById('split-file').value = "";
+            logToDb("Reset Split", "File cleared");
+            showToast("分割設定をリセットしました。");
+        }
+
+        async function processSplit() {
+            if (!currentSplitFile) return;
+            showLoading(true);
+            try {
+                const arrayBuffer = await currentSplitFile.arrayBuffer();
+                const pdf = await PDFLib.PDFDocument.load(arrayBuffer);
+                const count = pdf.getPageCount();
+
+                for (let i = 0; i < count; i++) {
+                    const newPdf = await PDFLib.PDFDocument.create();
+                    const [page] = await newPdf.copyPages(pdf, [i]);
+                    newPdf.addPage(page);
+                    const bytes = await newPdf.save();
+                    
+                    const name = currentSplitFile.name.replace(".pdf", "");
+                    downloadFile(bytes, `${name}_page_${i + 1}.pdf`, "application/pdf");
+                    
+                    await new Promise(r => setTimeout(r, 100));
+                }
+                logToDb("Split", currentSplitFile.name);
+                showToast("分割ダウンロードを開始しました。");
+            } catch (err) {
+                console.error(err);
+                showToast("分割中にエラーが発生しました。");
+            }
+            showLoading(false);
+        }
+
+        // --- PDF Logic: Edit (Order & Rotate) ---
+        async function handleEditFile(file) {
+            if (!file || file.type !== "application/pdf") return;
+            showLoading(true);
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                currentEditDoc = await PDFLib.PDFDocument.load(arrayBuffer);
+                const count = currentEditDoc.getPageCount();
+                
+                editPageState = [];
+                for (let i = 0; i < count; i++) {
+                    editPageState.push({ originalIndex: i, rotation: 0 });
+                }
+                
+                renderEditWorkspace();
+                document.getElementById('edit-workspace').classList.remove('hidden');
+                document.getElementById('edit-upload-container').classList.add('hidden');
+                document.getElementById('btn-reset-edit').classList.remove('hidden');
+            } catch (err) {
+                showToast("PDFの読み込みに失敗しました。");
+            }
+            showLoading(false);
+        }
+
+        function resetEdit() {
+            currentEditDoc = null;
+            editPageState = [];
+            document.getElementById('edit-workspace').classList.add('hidden');
+            document.getElementById('edit-upload-container').classList.remove('hidden');
+            document.getElementById('btn-reset-edit').classList.add('hidden');
+            document.getElementById('edit-file').value = "";
+            logToDb("Reset Edit", "Workspace cleared");
+            showToast("編集設定をリセットしました。");
+        }
+
+        function renderEditWorkspace() {
+            const container = document.getElementById('pages-container');
+            container.innerHTML = "";
+            
+            editPageState.forEach((state, visualIndex) => {
+                const card = document.createElement('div');
+                card.className = "page-card bg-white border rounded shadow-sm p-2 flex flex-col items-center cursor-move relative";
+                card.draggable = true;
+                
+                const rotateDeg = state.rotation;
+                
+                card.innerHTML = `
+                    <div class="w-full aspect-[3/4] bg-gray-200 flex items-center justify-center mb-2 overflow-hidden rounded">
+                        <div class="text-4xl font-bold text-gray-400 transition-transform duration-200" style="transform: rotate(${rotateDeg}deg)">
+                            ${state.originalIndex + 1}
+                        </div>
+                    </div>
+                    <div class="flex w-full justify-between items-center px-1">
+                        <span class="text-xs font-bold text-gray-500">P.${state.originalIndex + 1}</span>
+                        <div class="flex space-x-2">
+                            <button onclick="rotatePage(${visualIndex})" class="p-1 hover:bg-gray-100 rounded text-indigo-600" title="右に90度回転">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                            </button>
+                        </div>
+                    </div>
+                `;
+
+                card.ondragstart = (e) => {
+                    e.dataTransfer.setData("text/plain", visualIndex);
+                    card.classList.add('opacity-50');
+                };
+                card.ondragend = () => card.classList.remove('opacity-50');
+                card.ondragover = (e) => e.preventDefault();
+                card.ondrop = (e) => {
+                    e.preventDefault();
+                    const fromIndex = parseInt(e.dataTransfer.getData("text/plain"));
+                    reorderPages(fromIndex, visualIndex);
+                };
+
+                container.appendChild(card);
+            });
+        }
+
+        function rotatePage(visualIndex) {
+            editPageState[visualIndex].rotation = (editPageState[visualIndex].rotation + 90) % 360;
+            renderEditWorkspace();
+        }
+
+        function reorderPages(from, to) {
+            const item = editPageState.splice(from, 1)[0];
+            editPageState.splice(to, 0, item);
+            renderEditWorkspace();
+        }
+
+        async function processEdit() {
+            if (!currentEditDoc) return;
+            showLoading(true);
+            try {
+                const newPdf = await PDFLib.PDFDocument.create();
+                for (const state of editPageState) {
+                    const [page] = await newPdf.copyPages(currentEditDoc, [state.originalIndex]);
+                    const currentRot = page.getRotation().angle;
+                    page.setRotation(PDFLib.degrees(currentRot + state.rotation));
+                    newPdf.addPage(page);
+                }
+                const bytes = await newPdf.save();
+                downloadFile(bytes, "edited.pdf", "application/pdf");
+                logToDb("Edit", "Reordered/Rotated pages");
+                showToast("編集済みファイルを保存しました。");
+            } catch (err) {
+                console.error(err);
+                showToast("保存中にエラーが発生しました。");
+            }
+            showLoading(false);
+        }
+
+        // --- Core Helper: Download ---
+        function downloadFile(data, filename, mime) {
+            const blob = new Blob([data], { type: mime });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => {
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            }, 0);
+        }
+
+    </script>
+</body>
+</html>
