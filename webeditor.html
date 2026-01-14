@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Local Code Editor (Fixed V2)</title>
+    <title>Local Code Editor (Fixed V3)</title>
     
     <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -115,9 +115,37 @@
             return "LF";
         };
 
+        // --- Scroll Helper ---
+        // カーソル位置に合わせてスクロールする関数
+        const scrollToCursor = (textarea, pos) => {
+            if (!textarea) return;
+            
+            const value = textarea.value;
+            // カーソル位置までの行数を数える
+            const lineIndex = value.substring(0, pos).split('\n').length - 1;
+            
+            // CSSと一致させる必要がある定数
+            const lineHeight = 21; 
+            const paddingTop = 10; 
+            
+            // カーソルのY座標範囲
+            const cursorTop = paddingTop + (lineIndex * lineHeight);
+            const cursorBottom = cursorTop + lineHeight;
+            
+            // 現在の表示領域
+            const viewTop = textarea.scrollTop;
+            const viewBottom = viewTop + textarea.clientHeight;
+            
+            // 範囲外ならスクロール
+            if (cursorTop < viewTop) {
+                textarea.scrollTop = cursorTop - paddingTop;
+            } else if (cursorBottom > viewBottom) {
+                textarea.scrollTop = cursorBottom - textarea.clientHeight + paddingTop; 
+            }
+        };
+
         // --- Emacs Keybinding Logic ---
         const handleEmacsKeys = (e, value, setContent) => {
-            // ショートカットキーの競合防止
             if (!e.ctrlKey || e.altKey || e.metaKey) return;
             if (['c', 'v', 'x', 'z', 'y'].includes(e.key.toLowerCase())) return;
 
@@ -137,9 +165,20 @@
                 return idx === -1 ? value.length : idx;
             };
 
+            let newPos = start;
+            let shouldUpdateScroll = false;
+
             switch (e.key.toLowerCase()) {
-                case 'f': el.setSelectionRange(start + 1, start + 1); break;
-                case 'b': el.setSelectionRange(Math.max(0, start - 1), Math.max(0, start - 1)); break;
+                case 'f': 
+                    newPos = start + 1;
+                    el.setSelectionRange(newPos, newPos);
+                    shouldUpdateScroll = true;
+                    break;
+                case 'b': 
+                    newPos = Math.max(0, start - 1);
+                    el.setSelectionRange(newPos, newPos);
+                    shouldUpdateScroll = true;
+                    break;
                 case 'n': { 
                     const currLineStart = getLineStart(start);
                     const col = start - currLineStart;
@@ -147,8 +186,9 @@
                     if (currLineEnd < value.length) {
                         const nextLineStart = currLineEnd + 1;
                         const nextLineEnd = getLineEnd(nextLineStart);
-                        const newPos = nextLineStart + Math.min(col, nextLineEnd - nextLineStart);
+                        newPos = nextLineStart + Math.min(col, nextLineEnd - nextLineStart);
                         el.setSelectionRange(newPos, newPos);
+                        shouldUpdateScroll = true;
                     }
                     break;
                 }
@@ -158,14 +198,31 @@
                     if (currLineStart > 0) {
                         const prevLineEnd = currLineStart - 1;
                         const prevLineStart = getLineStart(prevLineEnd);
-                        const newPos = prevLineStart + Math.min(col, prevLineEnd - prevLineStart);
+                        newPos = prevLineStart + Math.min(col, prevLineEnd - prevLineStart);
                         el.setSelectionRange(newPos, newPos);
+                        shouldUpdateScroll = true;
                     }
                     break;
                 }
-                case 'a': { const ls = getLineStart(start); el.setSelectionRange(ls, ls); break; }
-                case 'e': { const le = getLineEnd(start); el.setSelectionRange(le, le); break; }
-                case 'd': if (start < value.length) { setContent(value.slice(0, start) + value.slice(start + 1)); setTimeout(() => el.setSelectionRange(start, start), 0); } break;
+                case 'a': 
+                    newPos = getLineStart(start);
+                    el.setSelectionRange(newPos, newPos); 
+                    shouldUpdateScroll = true;
+                    break;
+                case 'e': 
+                    newPos = getLineEnd(start);
+                    el.setSelectionRange(newPos, newPos); 
+                    shouldUpdateScroll = true;
+                    break;
+                case 'd': 
+                    if (start < value.length) { 
+                        setContent(value.slice(0, start) + value.slice(start + 1)); 
+                        setTimeout(() => {
+                            el.setSelectionRange(start, start);
+                            scrollToCursor(el, start);
+                        }, 0); 
+                    } 
+                    break;
                 case 'k': {
                     const lineEnd = getLineEnd(start);
                     if (start === lineEnd && start < value.length) {
@@ -173,10 +230,26 @@
                     } else {
                         setContent(value.slice(0, start) + value.slice(lineEnd));
                     }
-                    setTimeout(() => el.setSelectionRange(start, start), 0);
+                    setTimeout(() => {
+                        el.setSelectionRange(start, start);
+                        scrollToCursor(el, start);
+                    }, 0);
                     break;
                 }
-                case 'h': if (start > 0) { setContent(value.slice(0, start - 1) + value.slice(start)); setTimeout(() => el.setSelectionRange(start - 1, start - 1), 0); } break;
+                case 'h': 
+                    if (start > 0) { 
+                        setContent(value.slice(0, start - 1) + value.slice(start)); 
+                        setTimeout(() => {
+                            el.setSelectionRange(start - 1, start - 1);
+                            scrollToCursor(el, start - 1);
+                        }, 0); 
+                    } 
+                    break;
+            }
+
+            // 移動のみの操作の場合は、ここでスクロールを実行
+            if (shouldUpdateScroll) {
+                scrollToCursor(el, newPos);
             }
         };
 
@@ -204,7 +277,10 @@
                     const end = el.selectionEnd;
                     const newVal = content.substring(0, start) + '\t' + content.substring(end);
                     setContent(newVal);
-                    setTimeout(() => el.setSelectionRange(start + 1, start + 1), 0);
+                    setTimeout(() => {
+                        el.setSelectionRange(start + 1, start + 1);
+                        scrollToCursor(el, start + 1);
+                    }, 0);
                     return;
                 }
                 handleEmacsKeys(e, content, setContent);
@@ -213,18 +289,18 @@
             const handlePaste = (e) => {
                 e.preventDefault();
                 let text = (e.clipboardData || window.clipboardData).getData('text/plain');
-
-                // [修正] ペースト時に改行コードを \n に統一して余計な空行を防ぐ
                 if (text) {
                     text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
                 }
-
                 const el = e.target;
                 const start = el.selectionStart;
                 const end = el.selectionEnd;
                 const newVal = content.substring(0, start) + text + content.substring(end);
                 setContent(newVal);
-                setTimeout(() => el.setSelectionRange(start + text.length, start + text.length), 0);
+                setTimeout(() => {
+                    el.setSelectionRange(start + text.length, start + text.length);
+                    scrollToCursor(el, start + text.length);
+                }, 0);
             };
 
             const highlightedCode = useMemo(() => {
@@ -303,7 +379,7 @@
         // --- Main App ---
         const App = () => {
             const [files, setFiles] = useState([
-                { id: '1', name: 'readme.md', content: '# Fixed Editor V2\n\n- Fixed Paste behavior (CRLF removal)', language: 'markdown', lineEnding: 'LF' }
+                { id: '1', name: 'readme.md', content: '# Fixed Editor V3\n\n- Fixed Auto-scroll on Emacs key navigation', language: 'markdown', lineEnding: 'LF' }
             ]);
             const [activeId, setActiveId] = useState('1');
             const [isSplit, setIsSplit] = useState(false);
