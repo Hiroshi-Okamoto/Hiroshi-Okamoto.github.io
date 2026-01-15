@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Local Code Editor (Fixed V3)</title>
+    <title>Local Code Editor (Fixed V7)</title>
     
     <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -25,7 +25,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-markdown.min.js"></script>
 
     <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&family=Roboto+Mono:wght@400&display=swap" rel="stylesheet">
 
     <style>
         body {
@@ -34,21 +34,51 @@
             color: #d4d4d4;
             overflow: hidden;
         }
-        
-        /* フォントと行送りの固定化（行ズレ防止） */
-        .editor-font {
-            font-family: 'Roboto Mono', Consolas, 'Courier New', monospace;
-            font-size: 14px;
-            line-height: 21px; /* Fixed pixel height prevents vertical drift */
-            tab-size: 4;
+
+        /* * [重要] 共通スタイル設定 
+         * テキスト計測の精度を保つため、フォント設定はJS側と一致させる必要があります。
+         */
+        .editor-container textarea.editor-common-style,
+        .editor-container pre.editor-common-style,
+        .editor-container pre.editor-common-style code,
+        .editor-container pre.editor-common-style span {
+            font-family: 'Roboto Mono', 'Noto Sans JP', monospace !important;
+            font-size: 14px !important;
+            line-height: 24px !important;
+            font-weight: 400 !important;
+            letter-spacing: 0px !important;
+            
+            margin: 0 !important;
+            border: 0 !important;
+            outline: none !important;
+            box-sizing: border-box !important;
+            
+            white-space: pre !important;
+            overflow-wrap: normal !important;
+            word-break: normal !important;
+            
+            tab-size: 4 !important;
+            -moz-tab-size: 4 !important;
         }
 
+        /* Paddingの指定 */
+        .editor-container textarea.editor-common-style,
+        .editor-container pre.editor-common-style {
+            padding: 10px !important;
+        }
+
+        /* Syntax Highlight Colors */
+        .token.comment,
+        .token.prolog,
+        .token.doctype,
+        .token.cdata { color: #6a9955; }
+        
         /* Invisible Characters */
         .invis-space { color: #4d4d4d; }
         .invis-tab { color: #4d4d4d; }
-        .invis-eol { color: #606060; font-size: 0.8em; margin-left: 2px; user-select: none; }
+        .invis-eol { color: #606060; font-size: 0.8em; user-select: none; }
 
-        /* Overlay Layout */
+        /* Layout */
         .editor-container {
             position: relative;
             width: 100%;
@@ -57,38 +87,38 @@
             background-color: #1e1e1e;
         }
 
-        .editor-textarea {
-            position: absolute;
-            top: 0; left: 0; width: 100%; height: 100%;
-            z-index: 10; margin: 0; 
-            padding: 10px;
-            border: none; outline: none; resize: none;
-            background: transparent; color: transparent;
-            caret-color: #fff; white-space: pre; overflow: auto;
-        }
-        .editor-textarea::selection {
-            background: rgba(255, 255, 255, 0.1);
-            color: transparent;
-        }
-
+        /* Layer 1: Highlight */
         .editor-pre {
             position: absolute;
             top: 0; left: 0; width: 100%; height: 100%;
-            z-index: 1; margin: 0; 
-            padding: 10px;
-            border: none; background: #1e1e1e;
-            pointer-events: none; white-space: pre; overflow: hidden;
-        }
-        
-        .editor-pre code { 
-            font-family: inherit !important; 
-            line-height: inherit !important;
+            z-index: 1;
+            background: #1e1e1e;
+            pointer-events: none;
+            overflow: hidden;
         }
 
-        ::-webkit-scrollbar { width: 10px; height: 10px; }
-        ::-webkit-scrollbar-track { background: #252526; }
-        ::-webkit-scrollbar-thumb { background: #444; border-radius: 5px; }
-        ::-webkit-scrollbar-thumb:hover { background: #555; }
+        /* Layer 2: Input */
+        .editor-textarea {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 10;
+            background: transparent;
+            color: transparent;
+            caret-color: #ffffff;
+            resize: none;
+            overflow: auto;
+        }
+        
+        .editor-textarea::selection {
+            background: rgba(38, 79, 120, 0.5);
+            color: transparent;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 14px; height: 14px; }
+        ::-webkit-scrollbar-track { background: #1e1e1e; }
+        ::-webkit-scrollbar-thumb { background: #424242; border: 3px solid #1e1e1e; border-radius: 7px; }
+        ::-webkit-scrollbar-thumb:hover { background: #4f4f4f; }
     </style>
 </head>
 <body>
@@ -115,145 +145,69 @@
             return "LF";
         };
 
-        // --- Scroll Helper ---
-        // カーソル位置に合わせてスクロールする関数
+        // --- Text Width Measurement Helper ---
+        // テキスト幅計測用のContextを再利用
+        const widthContext = document.createElement('canvas').getContext('2d');
+        // CSSと一致させること
+        widthContext.font = "400 14px 'Roboto Mono', 'Noto Sans JP', monospace";
+
+        const measureTextWidth = (text) => {
+            // Tab文字はCanvasのmeasureTextで正しく計算されないため、スペース4つに置換して概算
+            const expandedText = text.replace(/\t/g, '    '); 
+            return widthContext.measureText(expandedText).width;
+        };
+
+        // --- Scroll Sync Helper ---
+        const LINE_HEIGHT = 24;
+        const PADDING_TOP = 10;
+        const PADDING_LEFT = 10;
+
         const scrollToCursor = (textarea, pos) => {
             if (!textarea) return;
             
+            // --- 縦方向の計算 ---
             const value = textarea.value;
-            // カーソル位置までの行数を数える
-            const lineIndex = value.substring(0, pos).split('\n').length - 1;
+            // カーソルまでのテキストを行単位で分割
+            const textUntilCursor = value.substring(0, pos);
+            const lines = textUntilCursor.split('\n');
+            const lineIndex = lines.length - 1;
             
-            // CSSと一致させる必要がある定数
-            const lineHeight = 21; 
-            const paddingTop = 10; 
+            const cursorTop = PADDING_TOP + (lineIndex * LINE_HEIGHT);
+            const cursorBottom = cursorTop + LINE_HEIGHT;
             
-            // カーソルのY座標範囲
-            const cursorTop = paddingTop + (lineIndex * lineHeight);
-            const cursorBottom = cursorTop + lineHeight;
-            
-            // 現在の表示領域
             const viewTop = textarea.scrollTop;
-            const viewBottom = viewTop + textarea.clientHeight;
+            const viewHeight = textarea.clientHeight;
+            const viewBottom = viewTop + viewHeight;
             
-            // 範囲外ならスクロール
             if (cursorTop < viewTop) {
-                textarea.scrollTop = cursorTop - paddingTop;
+                textarea.scrollTop = cursorTop - PADDING_TOP;
             } else if (cursorBottom > viewBottom) {
-                textarea.scrollTop = cursorBottom - textarea.clientHeight + paddingTop; 
-            }
-        };
-
-        // --- Emacs Keybinding Logic ---
-        const handleEmacsKeys = (e, value, setContent) => {
-            if (!e.ctrlKey || e.altKey || e.metaKey) return;
-            if (['c', 'v', 'x', 'z', 'y'].includes(e.key.toLowerCase())) return;
-
-            const targetKeys = ['f', 'b', 'n', 'p', 'a', 'e', 'd', 'k', 'h'];
-            if (targetKeys.includes(e.key.toLowerCase())) {
-                e.preventDefault();
-            } else {
-                return;
+                textarea.scrollTop = cursorBottom - viewHeight + PADDING_TOP;
             }
 
-            const el = e.target;
-            const start = el.selectionStart;
+            // --- 横方向の計算 (追加) ---
+            // 現在の行の行頭からカーソルまでのテキストを取得
+            const textInLineBeforeCursor = lines[lineIndex];
             
-            const getLineStart = (pos) => value.lastIndexOf('\n', pos - 1) + 1;
-            const getLineEnd = (pos) => {
-                const idx = value.indexOf('\n', pos);
-                return idx === -1 ? value.length : idx;
-            };
+            // テキスト幅を計測して、カーソルのX座標（左端からのピクセル数）を算出
+            const textWidth = measureTextWidth(textInLineBeforeCursor);
+            const cursorLeft = PADDING_LEFT + textWidth;
+            const cursorRight = cursorLeft + 2; // カーソル幅分少し余裕を見る
 
-            let newPos = start;
-            let shouldUpdateScroll = false;
+            const viewLeft = textarea.scrollLeft;
+            const viewWidth = textarea.clientWidth;
+            const viewRight = viewLeft + viewWidth;
 
-            switch (e.key.toLowerCase()) {
-                case 'f': 
-                    newPos = start + 1;
-                    el.setSelectionRange(newPos, newPos);
-                    shouldUpdateScroll = true;
-                    break;
-                case 'b': 
-                    newPos = Math.max(0, start - 1);
-                    el.setSelectionRange(newPos, newPos);
-                    shouldUpdateScroll = true;
-                    break;
-                case 'n': { 
-                    const currLineStart = getLineStart(start);
-                    const col = start - currLineStart;
-                    const currLineEnd = getLineEnd(start);
-                    if (currLineEnd < value.length) {
-                        const nextLineStart = currLineEnd + 1;
-                        const nextLineEnd = getLineEnd(nextLineStart);
-                        newPos = nextLineStart + Math.min(col, nextLineEnd - nextLineStart);
-                        el.setSelectionRange(newPos, newPos);
-                        shouldUpdateScroll = true;
-                    }
-                    break;
-                }
-                case 'p': { 
-                    const currLineStart = getLineStart(start);
-                    const col = start - currLineStart;
-                    if (currLineStart > 0) {
-                        const prevLineEnd = currLineStart - 1;
-                        const prevLineStart = getLineStart(prevLineEnd);
-                        newPos = prevLineStart + Math.min(col, prevLineEnd - prevLineStart);
-                        el.setSelectionRange(newPos, newPos);
-                        shouldUpdateScroll = true;
-                    }
-                    break;
-                }
-                case 'a': 
-                    newPos = getLineStart(start);
-                    el.setSelectionRange(newPos, newPos); 
-                    shouldUpdateScroll = true;
-                    break;
-                case 'e': 
-                    newPos = getLineEnd(start);
-                    el.setSelectionRange(newPos, newPos); 
-                    shouldUpdateScroll = true;
-                    break;
-                case 'd': 
-                    if (start < value.length) { 
-                        setContent(value.slice(0, start) + value.slice(start + 1)); 
-                        setTimeout(() => {
-                            el.setSelectionRange(start, start);
-                            scrollToCursor(el, start);
-                        }, 0); 
-                    } 
-                    break;
-                case 'k': {
-                    const lineEnd = getLineEnd(start);
-                    if (start === lineEnd && start < value.length) {
-                        setContent(value.slice(0, start) + value.slice(start + 1));
-                    } else {
-                        setContent(value.slice(0, start) + value.slice(lineEnd));
-                    }
-                    setTimeout(() => {
-                        el.setSelectionRange(start, start);
-                        scrollToCursor(el, start);
-                    }, 0);
-                    break;
-                }
-                case 'h': 
-                    if (start > 0) { 
-                        setContent(value.slice(0, start - 1) + value.slice(start)); 
-                        setTimeout(() => {
-                            el.setSelectionRange(start - 1, start - 1);
-                            scrollToCursor(el, start - 1);
-                        }, 0); 
-                    } 
-                    break;
-            }
+            const hScrollPadding = 30; // 余裕を持ってスクロールさせる
 
-            // 移動のみの操作の場合は、ここでスクロールを実行
-            if (shouldUpdateScroll) {
-                scrollToCursor(el, newPos);
+            if (cursorLeft < viewLeft) {
+                textarea.scrollLeft = Math.max(0, cursorLeft - hScrollPadding);
+            } else if (cursorRight > viewRight) {
+                textarea.scrollLeft = cursorRight - viewWidth + hScrollPadding;
             }
         };
 
-        // --- Single Editor Pane ---
+        // --- Editor Pane Component ---
         const EditorPane = ({ file, updateFile }) => {
             const textareaRef = useRef(null);
             const preRef = useRef(null);
@@ -270,20 +224,109 @@
             const setContent = (newContent) => updateFile({ ...file, content: newContent });
 
             const handleKeyDown = (e) => {
+                const el = e.target;
+                const value = el.value;
+                const start = el.selectionStart;
+
+                // Emacs Keybinds & Shortcut Prevention
+                if (e.ctrlKey && !e.altKey && !e.metaKey) {
+                    const k = e.key.toLowerCase();
+                    const emacsKeys = ['f', 'b', 'n', 'p', 'a', 'e', 'd', 'k', 'h'];
+                    
+                    if (emacsKeys.includes(k)) {
+                        e.preventDefault();
+                        e.stopPropagation();
+
+                        const getLineStart = (pos) => value.lastIndexOf('\n', pos - 1) + 1;
+                        const getLineEnd = (pos) => {
+                            const idx = value.indexOf('\n', pos);
+                            return idx === -1 ? value.length : idx;
+                        };
+
+                        let newPos = start;
+
+                        switch (k) {
+                            case 'f': // Forward
+                                newPos = start + 1; 
+                                break;
+                            case 'b': // Backward
+                                newPos = Math.max(0, start - 1); 
+                                break;
+                            case 'n': { // Next line
+                                const currLineStart = getLineStart(start);
+                                const col = start - currLineStart;
+                                const currLineEnd = getLineEnd(start);
+                                if (currLineEnd < value.length) {
+                                    const nextLineStart = currLineEnd + 1;
+                                    const nextLineEnd = getLineEnd(nextLineStart);
+                                    newPos = nextLineStart + Math.min(col, nextLineEnd - nextLineStart);
+                                }
+                                break;
+                            }
+                            case 'p': { // Prev line
+                                const currLineStart = getLineStart(start);
+                                const col = start - currLineStart;
+                                if (currLineStart > 0) {
+                                    const prevLineEnd = currLineStart - 1;
+                                    const prevLineStart = getLineStart(prevLineEnd);
+                                    newPos = prevLineStart + Math.min(col, prevLineEnd - prevLineStart);
+                                }
+                                break;
+                            }
+                            case 'a': // Start of line
+                                newPos = getLineStart(start); 
+                                break;
+                            case 'e': // End of line
+                                newPos = getLineEnd(start); 
+                                break;
+                            case 'd': // Delete char
+                                if (start < value.length) {
+                                    const nextVal = value.slice(0, start) + value.slice(start + 1);
+                                    setContent(nextVal);
+                                    setTimeout(() => scrollToCursor(el, start), 0);
+                                    return; 
+                                }
+                                break;
+                            case 'k': // Kill line
+                                {
+                                    const lineEnd = getLineEnd(start);
+                                    const nextVal = (start === lineEnd && start < value.length)
+                                        ? value.slice(0, start) + value.slice(start + 1)
+                                        : value.slice(0, start) + value.slice(lineEnd);
+                                    setContent(nextVal);
+                                    setTimeout(() => scrollToCursor(el, start), 0);
+                                    return;
+                                }
+                            case 'h': // Backspace
+                                if (start > 0) {
+                                    const nextVal = value.slice(0, start - 1) + value.slice(start);
+                                    setContent(nextVal);
+                                    setTimeout(() => {
+                                        el.setSelectionRange(start - 1, start - 1);
+                                        scrollToCursor(el, start - 1);
+                                    }, 0);
+                                    return;
+                                }
+                                break;
+                        }
+
+                        // カーソル移動実行とスクロール追従
+                        if (newPos !== start) {
+                            el.setSelectionRange(newPos, newPos);
+                            scrollToCursor(el, newPos);
+                        }
+                    }
+                }
+
                 if (e.key === 'Tab') {
                     e.preventDefault();
-                    const el = e.target;
-                    const start = el.selectionStart;
-                    const end = el.selectionEnd;
-                    const newVal = content.substring(0, start) + '\t' + content.substring(end);
+                    const newVal = value.substring(0, start) + '\t' + value.substring(el.selectionEnd);
                     setContent(newVal);
                     setTimeout(() => {
                         el.setSelectionRange(start + 1, start + 1);
                         scrollToCursor(el, start + 1);
                     }, 0);
-                    return;
                 }
-                handleEmacsKeys(e, content, setContent);
             };
 
             const handlePaste = (e) => {
@@ -298,8 +341,9 @@
                 const newVal = content.substring(0, start) + text + content.substring(end);
                 setContent(newVal);
                 setTimeout(() => {
-                    el.setSelectionRange(start + text.length, start + text.length);
-                    scrollToCursor(el, start + text.length);
+                    const newCursor = start + text.length;
+                    el.setSelectionRange(newCursor, newCursor);
+                    scrollToCursor(el, newCursor);
                 }, 0);
             };
 
@@ -330,7 +374,7 @@
 
             return (
                 <div className="editor-container group">
-                    <pre ref={preRef} className="editor-pre editor-font">
+                    <pre ref={preRef} className="editor-pre editor-common-style">
                         <code dangerouslySetInnerHTML={{ __html: highlightedCode + (content.endsWith('\n') ? '' : '') }} />
                     </pre>
                     <textarea
@@ -340,7 +384,7 @@
                         onScroll={handleScroll}
                         onKeyDown={handleKeyDown}
                         onPaste={handlePaste}
-                        className="editor-textarea editor-font"
+                        className="editor-textarea editor-common-style"
                         spellCheck="false"
                         autoCapitalize="off"
                         autoComplete="off"
@@ -379,7 +423,7 @@
         // --- Main App ---
         const App = () => {
             const [files, setFiles] = useState([
-                { id: '1', name: 'readme.md', content: '# Fixed Editor V3\n\n- Fixed Auto-scroll on Emacs key navigation', language: 'markdown', lineEnding: 'LF' }
+                { id: '1', name: 'readme.md', content: '# Fixed Editor V7\n\n- Horizontal scroll sync on cursor move\n- Fixed Cursor vertical alignment', language: 'markdown', lineEnding: 'LF' }
             ]);
             const [activeId, setActiveId] = useState('1');
             const [isSplit, setIsSplit] = useState(false);
